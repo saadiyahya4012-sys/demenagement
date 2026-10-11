@@ -1,0 +1,6 @@
+{
+  "name": "MoovVert - Transport & Déménagement de Meubles",
+  "description": "Application web moderne de transport et déménagement de meubles avec négociation de prix en direct entre clients et chauffeurs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
