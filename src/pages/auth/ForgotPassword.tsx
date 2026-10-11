@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '../../hooks/useAppStore';
+import { apiFetch } from '../../utils/api';
 import {
   Mail,
   ArrowRight,
@@ -40,7 +41,7 @@ export const ForgotPassword: React.FC = () => {
     setIsLoading(true);
 
     try {
-      await fetch('/api/forgot-password', {
+      await apiFetch('/api/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),

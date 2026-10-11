@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '../../hooks/useAppStore';
+import { apiFetch } from '../../utils/api';
 import { UserRole } from '../../types';
 import {
   Mail,
@@ -140,7 +141,7 @@ export const VerifyEmail: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/verify-email', {
+      const response = await apiFetch('/api/verify-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -206,7 +207,7 @@ export const VerifyEmail: React.FC = () => {
     setSuccessMessage('');
 
     try {
-      const response = await fetch('/api/resend-verification-code', {
+      const response = await apiFetch('/api/resend-verification-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), role }),
@@ -259,7 +260,7 @@ export const VerifyEmail: React.FC = () => {
     setErrorMessage('');
 
     try {
-      const response = await fetch('/api/resend-verification-code', {
+      const response = await apiFetch('/api/resend-verification-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed, role }),

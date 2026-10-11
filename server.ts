@@ -1,7 +1,9 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
@@ -11,9 +13,53 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-app.use(express.json());
+// -----------------------------------------------------------------------------
+// CORS — allow the Vercel frontend (and local dev) to call this API.
+// Set FRONTEND_URL on Render to your Vercel domain, e.g.
+// https://moovvert.vercel.app (comma-separated list supported for previews).
+// -----------------------------------------------------------------------------
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow same-origin / curl / health checks with no Origin header.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) {
+        // No FRONTEND_URL configured: allow all non-credentialed requests
+        // (local dev convenience). Set FRONTEND_URL in production.
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+        return callback(null, true);
+      }
+      return callback(Object.assign(new Error(`CORS blocked for origin: ${origin}`), { status: 403 }));
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
+    maxAge: 86400,
+  })
+);
+
+app.use(express.json({ limit: '1mb' }));
+
+// -----------------------------------------------------------------------------
+// HEALTH CHECKS (used by Render + smoke tests). No equivalent existed before.
+// -----------------------------------------------------------------------------
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', service: 'moovvert-api', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', service: 'moovvert-api', timestamp: new Date().toISOString() });
+});
 
 // In-memory accounts storage & verification records
 interface RegisteredUser {
@@ -426,10 +472,48 @@ app.post('/api/forgot-password', async (req: Request, res: Response) => {
   }
 });
 
+// Unknown /api/* routes -> JSON 404 (must be registered AFTER all API routes
+// and BEFORE the SPA fallback so typos never return index.html).
+function registerApiFallback() {
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({ success: false, error: 'Route API introuvable.' });
+  });
+}
+
+function registerErrorHandler() {
+  // Global error handler (must be the very last middleware).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('Unhandled route error:', err);
+    const status = err?.status || 500;
+    res.status(status).json({ success: false, error: err?.message || 'Erreur interne du serveur.' });
+  });
+}
+
 // -----------------------------------------------------------------------------
-// VITE DEV MIDDLEWARE MOUNT
+// STATIC / VITE MOUNT
 // -----------------------------------------------------------------------------
+function resolveDistDir(): string | null {
+  const candidates = [
+    process.env.DIST_DIR,
+    path.resolve(process.cwd(), 'dist'),
+    path.resolve(__dirname, 'dist'), // tsx dev: server.ts at project root
+    path.resolve(__dirname, '../dist'), // compiled: dist-server/server.js -> ../dist
+  ].filter(Boolean) as string[];
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'index.html'))) return dir;
+    } catch {
+      // ignore and try next candidate
+    }
+  }
+  return null;
+}
+
 async function startServer() {
+  // Register API 404 + error handler BEFORE static/SPA fallback.
+  registerApiFallback();
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -438,15 +522,58 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
+    const distDir = resolveDistDir();
+    if (distDir) {
+      app.use(express.static(distDir));
+      // SPA fallback: serve index.html for non-API GET routes.
+      // Uses app.use (no wildcard pattern) for Express 4/5 compatibility.
+      app.use((req: Request, res: Response, next: NextFunction) => {
+        if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+        res.sendFile(path.join(distDir, 'index.html'));
+      });
+    } else {
+      console.warn(
+        'DIST_DIR introuvable : le backend tourne en mode API uniquement (aucun frontend statique servi).'
+      );
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MoovVert server running on port ${PORT}`);
+  registerErrorHandler();
+
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`MoovVert server running on 0.0.0.0:${PORT} (NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Le port ${PORT} est déjà utilisé. Libérez-le ou définissez PORT=<libre>.`);
+    } else {
+      console.error('Server listen error:', err);
+    }
+    process.exit(1);
+  });
+
+  const shutdown = (signal: string) => {
+    console.log(`Signal ${signal} reçu : arrêt gracieux...`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  return server;
 }
 
-startServer();
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  process.exit(1);
+});
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

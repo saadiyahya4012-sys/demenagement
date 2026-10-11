@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '../../hooks/useAppStore';
+import { apiFetch } from '../../utils/api';
 import { UserRole } from '../../types';
 import {
   Mail,
@@ -50,7 +51,7 @@ export const AuthPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/login', {
+      const response = await apiFetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -133,7 +134,7 @@ export const AuthPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/register', {
+      const response = await apiFetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
